@@ -1,0 +1,15 @@
+# Visual Studio yerel ayar ve önbellekleri
+.vs/
+*.user
+
+# Derleme çıktıları ve geçici dosyalar
+x64/
+x86/
+Debug/
+Release/
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.log
+*.tlog
