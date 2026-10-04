@@ -8,6 +8,7 @@
 #include <string>
 #include <fstream>
 #include <algorithm>
+#include <immintrin.h>
 
 using namespace std;
 
@@ -77,6 +78,7 @@ vector<vector<float>> transpose(vector<vector<float>>& m2) {
     return tM2;
 }
 
+// deprecated - for loop
 float dotProduct(vector<float>::const_iterator v1Begin, vector<float>::const_iterator v1End, vector<float>::const_iterator v2Begin) {
     float local = 0.0f;
 
@@ -89,10 +91,37 @@ float dotProduct(vector<float>::const_iterator v1Begin, vector<float>::const_ite
     return local;
 }
 
+// updated for simd operations
+float dotProductOptimized(const float* a, const float* b, size_t size)
+{
+    __m256 sum = _mm256_setzero_ps();
+
+    size_t i = 0;
+
+    for (; i + 8 <= size; i += 8) {
+        __m256 va = _mm256_loadu_ps(a + i);
+        __m256 vb = _mm256_loadu_ps(b + i);
+
+        sum = _mm256_fmadd_ps(va, vb, sum);
+    }
+
+    float temp[8];
+    _mm256_storeu_ps(temp, sum);
+
+    float result =
+        temp[0] + temp[1] + temp[2] + temp[3] +
+        temp[4] + temp[5] + temp[6] + temp[7];
+
+    for (; i < size; ++i)
+        result += a[i] * b[i];
+
+    return result;
+}
+
 void matmul(vector<vector<float>>& m1, vector<vector<float>>& tM2, vector<vector<float>>& res) {
     for (int i = 0; i < res.size(); i++) {
         for (int j = 0; j < res[i].size(); j++) {
-            res[i][j] = dotProduct(m1[i].begin(),m1[i].end(),tM2[j].begin());
+            res[i][j] = dotProduct(m1[i].begin(), m1[i].end(), tM2[j].begin()); //dotProduct(m1[i].data(), tM2[j].data(), m1[i].size());
         }
     }
 }
@@ -100,7 +129,23 @@ void matmul(vector<vector<float>>& m1, vector<vector<float>>& tM2, vector<vector
 void matmulPar(vector<vector<float>>& m1, vector<vector<float>>& tM2, vector<vector<float>>& res, int col, int row, int width, int height) {
     for (int i = row; i < row + height; i++) {
         for (int j = col; j < col + width; j++) {
-            res[i][j] = dotProduct(m1[i].begin(),m1[i].end(),tM2[j].begin());
+            res[i][j] = dotProduct(m1[i].begin(), m1[i].end(), tM2[j].begin());//dotProduct(m1[i].data(), tM2[j].data(), m1[i].size());;
+        }
+    }
+}
+
+void matmulOptimized(vector<vector<float>>&m1, vector<vector<float>>&tM2, vector<vector<float>>&res) {
+    for (int i = 0; i < res.size(); i++) {
+        for (int j = 0; j < res[i].size(); j++) {
+            res[i][j] = dotProductOptimized(m1[i].data(), tM2[j].data(), m1[i].size());
+        }
+    }
+}
+
+void matmulParOptimized(vector<vector<float>>& m1, vector<vector<float>>& tM2, vector<vector<float>>& res, int col, int row, int width, int height) {
+    for (int i = row; i < row + height; i++) {
+        for (int j = col; j < col + width; j++) {
+            res[i][j] = dotProductOptimized(m1[i].data(), tM2[j].data(), m1[i].size());;
         }
     }
 }
@@ -126,6 +171,7 @@ int main(int argc, char** argv) {
 
     int numThr = (argc > 1) ? atoi(argv[1]) : static_cast<int>(thread::hardware_concurrency());
     int runs = (argc > 2) ? atoi(argv[2]) : 100;
+    bool optimized = (argc > 3) ? (argv[3] == "true") ? true : false : true;
 
     cout << "M: " << M << " K: " << K << " N: " << N << '\n';
     cout << "Threads: " << numThr << '\n';
@@ -146,11 +192,20 @@ int main(int argc, char** argv) {
         vector<vector<float>> res(m1.size(),vector<float>(m2[0].size()));
         vector<vector<float>> resPar(m1.size(),vector<float>(m2[0].size()));
         vector<vector<float>> tM2 = transpose(m2);
-
-        auto startSeq = chrono::high_resolution_clock::now();
-        matmul(m1, tM2, res);
-        auto endSeq = chrono::high_resolution_clock::now();
-        long long seqDuration =chrono::duration_cast<chrono::microseconds>(endSeq - startSeq).count();
+        
+        long long seqDuration;
+        if (!optimized) {
+            auto startSeq = chrono::high_resolution_clock::now();
+            matmul(m1, tM2, res);
+            auto endSeq = chrono::high_resolution_clock::now();
+            seqDuration = chrono::duration_cast<chrono::microseconds>(endSeq - startSeq).count();
+        }
+        else {
+            auto startSeq = chrono::high_resolution_clock::now();
+            matmulOptimized(m1, tM2, res);
+            auto endSeq = chrono::high_resolution_clock::now();
+            seqDuration = chrono::duration_cast<chrono::microseconds>(endSeq - startSeq).count();
+        }
 
         vector<thread> thrs(numThr);
 
@@ -172,29 +227,55 @@ int main(int argc, char** argv) {
 
         int localH = 0;
         int threadIdx = 0;
+        long long parDuration;
+        if (!optimized) {
+            auto startPar = chrono::high_resolution_clock::now();
 
-        auto startPar = chrono::high_resolution_clock::now();
+            for (int i = 0; i < gridRow; i++) {
+                int localW = 0;
+                int gridHeight = stepSizeRow + (i < resRow ? 1 : 0);
 
-        for (int i = 0; i < gridRow; i++) {
-            int localW = 0;
-            int gridHeight = stepSizeRow + (i < resRow ? 1 : 0);
+                for (int j = 0; j < gridCol; j++) {
+                    int gridWidth = stepSizeCol + (j < resCol ? 1 : 0);
+                    thrs[threadIdx++] = thread(matmulPar, ref(m1), ref(tM2), ref(resPar), localW, localH, gridWidth, gridHeight);
+                    localW += gridWidth;
+                }
 
-            for (int j = 0; j < gridCol; j++) {
-                int gridWidth = stepSizeCol + (j < resCol ? 1 : 0);
-                thrs[threadIdx++] = thread(matmulPar, ref(m1), ref(tM2), ref(resPar), localW, localH, gridWidth, gridHeight);
-                localW += gridWidth;
+                localH += gridHeight;
             }
 
-            localH += gridHeight;
+            for (int i = 0; i < numThr; i++) {
+                thrs[i].join();
+            }
+
+            auto endPar = chrono::high_resolution_clock::now();
+
+            parDuration =chrono::duration_cast<chrono::microseconds>(endPar - startPar).count();
         }
+        else {
+            auto startPar = chrono::high_resolution_clock::now();
 
-        for (int i = 0; i < numThr; i++) {
-            thrs[i].join();
+            for (int i = 0; i < gridRow; i++) {
+                int localW = 0;
+                int gridHeight = stepSizeRow + (i < resRow ? 1 : 0);
+
+                for (int j = 0; j < gridCol; j++) {
+                    int gridWidth = stepSizeCol + (j < resCol ? 1 : 0);
+                    thrs[threadIdx++] = thread(matmulParOptimized, ref(m1), ref(tM2), ref(resPar), localW, localH, gridWidth, gridHeight);
+                    localW += gridWidth;
+                }
+
+                localH += gridHeight;
+            }
+
+            for (int i = 0; i < numThr; i++) {
+                thrs[i].join();
+            }
+
+            auto endPar = chrono::high_resolution_clock::now();
+
+            parDuration = chrono::duration_cast<chrono::microseconds>(endPar - startPar).count();
         }
-
-        auto endPar = chrono::high_resolution_clock::now();
-
-        long long parDuration =chrono::duration_cast<chrono::microseconds>(endPar - startPar).count();
 
         seqTimes.push_back(seqDuration);
         parTimes.push_back(parDuration);
