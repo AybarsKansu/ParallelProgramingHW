@@ -121,7 +121,7 @@ float dotProductOptimized(const float* a, const float* b, size_t size)
 void matmul(vector<vector<float>>& m1, vector<vector<float>>& tM2, vector<vector<float>>& res) {
     for (int i = 0; i < res.size(); i++) {
         for (int j = 0; j < res[i].size(); j++) {
-            res[i][j] = dotProduct(m1[i].begin(), m1[i].end(), tM2[j].begin()); //dotProduct(m1[i].data(), tM2[j].data(), m1[i].size());
+            res[i][j] = dotProduct(m1[i].begin(), m1[i].end(), tM2[j].begin());
         }
     }
 }
@@ -129,7 +129,7 @@ void matmul(vector<vector<float>>& m1, vector<vector<float>>& tM2, vector<vector
 void matmulPar(vector<vector<float>>& m1, vector<vector<float>>& tM2, vector<vector<float>>& res, int col, int row, int width, int height) {
     for (int i = row; i < row + height; i++) {
         for (int j = col; j < col + width; j++) {
-            res[i][j] = dotProduct(m1[i].begin(), m1[i].end(), tM2[j].begin());//dotProduct(m1[i].data(), tM2[j].data(), m1[i].size());;
+            res[i][j] = dotProduct(m1[i].begin(), m1[i].end(), tM2[j].begin());
         }
     }
 }
@@ -166,12 +166,18 @@ bool areEqual(const vector<vector<float>>& a,const vector<vector<float>>& b,floa
     return true;
 }
 
+struct Tile {
+    int col, row, width, height;
+};
+
 int main(int argc, char** argv) {
     int M = 512, K = 512, N = 512;
-
+    /*
+        Takes numThr, run count and optimized option
+    */
     int numThr = (argc > 1) ? atoi(argv[1]) : static_cast<int>(thread::hardware_concurrency());
     int runs = (argc > 2) ? atoi(argv[2]) : 100;
-    bool optimized = (argc > 3) ? (argv[3] == "true") ? true : false : true;
+    bool optimized = (argc > 3) ? (string(argv[3]) == "true") : true;
 
     cout << "M: " << M << " K: " << K << " N: " << N << '\n';
     cout << "Threads: " << numThr << '\n';
@@ -207,7 +213,9 @@ int main(int argc, char** argv) {
             seqDuration = chrono::duration_cast<chrono::microseconds>(endSeq - startSeq).count();
         }
 
-        vector<thread> thrs(numThr);
+        // Start of paralel ======================================================
+        vector<thread> thrs;
+        thrs.reserve(numThr - 1);
 
         int gridRow = 1;
         int gridCol = numThr;
@@ -225,57 +233,38 @@ int main(int argc, char** argv) {
         int stepSizeCol = res[0].size() / gridCol;
         int resCol = res[0].size() % gridCol;
 
+        // get tiles so parallel don't waste time calculating it
+        vector<Tile> tiles;
         int localH = 0;
-        int threadIdx = 0;
+        for (int i = 0; i < gridRow; i++) {
+            int h = stepSizeRow + (i < resRow ? 1 : 0);
+            int localW = 0;
+            for (int j = 0; j < gridCol; j++) {
+                int w = stepSizeCol + (j < resCol ? 1 : 0);
+                tiles.push_back({ localW, localH, w, h });
+                localW += w;
+            }
+            localH += h;
+        }
+
+        auto worker = optimized ? matmulParOptimized : matmulPar;
+
         long long parDuration;
-        if (!optimized) {
-            auto startPar = chrono::high_resolution_clock::now();
 
-            for (int i = 0; i < gridRow; i++) {
-                int localW = 0;
-                int gridHeight = stepSizeRow + (i < resRow ? 1 : 0);
+        auto startPar = chrono::high_resolution_clock::now();
 
-                for (int j = 0; j < gridCol; j++) {
-                    int gridWidth = stepSizeCol + (j < resCol ? 1 : 0);
-                    thrs[threadIdx++] = thread(matmulPar, ref(m1), ref(tM2), ref(resPar), localW, localH, gridWidth, gridHeight);
-                    localW += gridWidth;
-                }
-
-                localH += gridHeight;
-            }
-
-            for (int i = 0; i < numThr; i++) {
-                thrs[i].join();
-            }
-
-            auto endPar = chrono::high_resolution_clock::now();
-
-            parDuration =chrono::duration_cast<chrono::microseconds>(endPar - startPar).count();
+        for (size_t t = 0; t + 1 < tiles.size(); t++) {
+            const Tile& k = tiles[t];
+            thrs.emplace_back(worker, ref(m1), ref(tM2), ref(resPar), k.col, k.row, k.width, k.height);
         }
-        else {
-            auto startPar = chrono::high_resolution_clock::now();
 
-            for (int i = 0; i < gridRow; i++) {
-                int localW = 0;
-                int gridHeight = stepSizeRow + (i < resRow ? 1 : 0);
+        const Tile& last = tiles.back();
+        worker(m1, tM2, resPar, last.col, last.row, last.width, last.height);
 
-                for (int j = 0; j < gridCol; j++) {
-                    int gridWidth = stepSizeCol + (j < resCol ? 1 : 0);
-                    thrs[threadIdx++] = thread(matmulParOptimized, ref(m1), ref(tM2), ref(resPar), localW, localH, gridWidth, gridHeight);
-                    localW += gridWidth;
-                }
+        for (auto& t : thrs) t.join();
 
-                localH += gridHeight;
-            }
-
-            for (int i = 0; i < numThr; i++) {
-                thrs[i].join();
-            }
-
-            auto endPar = chrono::high_resolution_clock::now();
-
-            parDuration = chrono::duration_cast<chrono::microseconds>(endPar - startPar).count();
-        }
+        auto endPar = chrono::high_resolution_clock::now();
+        parDuration = chrono::duration_cast<chrono::microseconds>(endPar - startPar).count();
 
         seqTimes.push_back(seqDuration);
         parTimes.push_back(parDuration);
