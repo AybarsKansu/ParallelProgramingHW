@@ -171,7 +171,8 @@ struct Tile {
 };
 
 int main(int argc, char** argv) {
-    int M = 512, K = 512, N = 512;
+    int t = 4096;
+    int M = t, K = t, N = t;
     /*
         Takes numThr, run count and optimized option
     */
@@ -280,12 +281,12 @@ int main(int argc, char** argv) {
         cout << "Run " << run + 1 << " | Seq: " << seqDuration << " microsecond " << (double)seqDuration / 1000 << " millisecond" << " | Par: " << parDuration 
             << " microsecond " << (double)parDuration / 1000 << " millisecond" << " | Speedup: " << speedup << "x\n";
     }
-
-    logFile.close();
-
     double seqMean = accumulate(seqTimes.begin(), seqTimes.end(), 0.0) / seqTimes.size();
-
     double parMean = accumulate(parTimes.begin(), parTimes.end(), 0.0) / parTimes.size();
+    double meanSpeedup = seqMean / parMean;
+
+    logFile << "mean," << seqMean << "," << parMean << "," << meanSpeedup << "\n";
+    logFile.close();
 
     long long seqMin = *min_element(seqTimes.begin(), seqTimes.end());
     long long seqMax = *max_element(seqTimes.begin(), seqTimes.end());
