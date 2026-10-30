@@ -1,5 +1,15 @@
-cuda-course/
 cuda-samples/
 build/
-main
 main.exe
+cuda-env.bat
+
+# CUDA and CMake generated files
+*.obj
+*.o
+*.ptx
+*.cubin
+*.fatbin
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
