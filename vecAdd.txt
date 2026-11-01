@@ -1,0 +1,144 @@
+#include <cuda_runtime.h>
+#include <iostream>
+#include <stdio.h>
+
+using namespace std;
+
+void displayGpuConfig() {
+     int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+
+    for (int i = 0; i < deviceCount; i++) {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, i);
+
+        cout << "GPU: " << prop.name << "\n";
+        cout << "Compute Capability: "
+             << prop.major << "." << prop.minor << "\n";
+
+        cout << "Global Memory: "
+             << prop.totalGlobalMem / (1024 * 1024)
+             << " MB\n";
+
+        cout << "SM Count: "
+             << prop.multiProcessorCount << "\n";
+
+        cout << "Warp Size: "
+             << prop.warpSize << "\n";
+
+        cout << "Max Threads per Block: "
+             << prop.maxThreadsPerBlock << "\n";
+
+        cout << "Max Threads per SM: "
+             << prop.maxThreadsPerMultiProcessor << "\n";
+
+        cout << "Max Block Dimensions: "
+             << prop.maxThreadsDim[0] << ", "
+             << prop.maxThreadsDim[1] << ", "
+             << prop.maxThreadsDim[2] << "\n";
+
+        cout << "Max Grid Dimensions: "
+             << prop.maxGridSize[0] << ", "
+             << prop.maxGridSize[1] << ", "
+             << prop.maxGridSize[2] << "\n";
+    }
+}
+
+__global__ void matAdd(float* A, float* B, float* C) {
+          
+}
+
+void vecAddCpu(float* A, float* B, float* C, int n){
+     for (int i = 0; i < n; i++) {
+          C[i] = A[i] + B[i];
+     }
+}
+
+bool check(float* A, float* B, int n){
+     for (int i = 0; i < n; i++) {
+          if (abs(A[i] - B[i]) > 0.001){
+               return false;
+          }
+     }
+     return true;
+}
+
+__global__ void vecAdd(float* A, float* B, float* C, int size){
+     //printf("blockDim: %d, blockIdx: %d, threadIdx: %d\n", blockDim.x, blockIdx.x, threadIdx.x);
+     int index = blockDim.x * 2 * blockIdx.x + threadIdx.x * 2;
+     printf("summing indexes: %d, %d\n", index, index+1);
+     if (index< size) {
+          C[index] = B[index] + A[index];
+          if (index + 1 < size) {
+               C[index+1] = B[index+1] + A[index+1];
+          }
+     }
+}
+
+int main() {
+     //displayGpuConfig();
+     int size = 500;
+     size_t bytes = sizeof(float) * size;
+
+     float* A_h = new float[size];
+     float* B_h = new float[size];
+     float* C_h = new float[size];
+     float* C = new float[size];
+
+     for (int i = 0; i < size; i++) {
+          A_h[i] = 2.0;
+          B_h[i] = 3.5;
+     }
+
+     float* A_d = nullptr;
+     float* B_d = nullptr;
+     float* C_d = nullptr;
+     
+     cudaError_t err = cudaSuccess;
+     err=cudaMalloc((void**)&A_d, bytes);
+     if (err != cudaSuccess){
+          printf("%s", cudaGetErrorString(err));
+     }
+     err=cudaMalloc((void**)&B_d, bytes);
+     if (err != cudaSuccess){
+          printf("%s", cudaGetErrorString(err));
+     }
+     err=cudaMalloc((void**)&C_d, bytes);
+     if (err != cudaSuccess){
+          printf("%s", cudaGetErrorString(err));
+     }
+
+     err = cudaMemcpy(A_d, A_h, bytes, cudaMemcpyHostToDevice);
+     if (err != cudaSuccess){
+          printf("%s", cudaGetErrorString(err));
+     }
+     err = cudaMemcpy(B_d, B_h, bytes, cudaMemcpyHostToDevice);
+     if (err != cudaSuccess){
+          printf("%s", cudaGetErrorString(err));
+     }
+
+     int threadsPerBlock = 128;
+     int blocksPerGrid = (size+threadsPerBlock-1) / threadsPerBlock;
+     std::cout << blocksPerGrid << std::endl;
+     vecAdd<<<blocksPerGrid/2, threadsPerBlock>>>(A_d, B_d, C_d, size);
+     cudaDeviceSynchronize();
+     err = cudaGetLastError();
+     if (err != cudaSuccess){
+          printf("%s", cudaGetErrorString(err));
+     }
+     err = cudaMemcpy(C_h, C_d, bytes, cudaMemcpyDeviceToHost);
+     if (err != cudaSuccess){
+          printf("%s", cudaGetErrorString(err));
+     }
+     cudaFree(A_d); cudaFree(B_d); cudaFree(C_d);
+
+     vecAddCpu(A_h, B_h, C, size);
+     bool flag = check(C_h, C, size);
+     if (!flag){
+          std::cout << "somethings wrong\n";
+     } else {
+          std::cout << "everything went succesfully\n";
+     }
+     free(A_h); free(B_h); free(C_h); free(C);
+     cudaDeviceSynchronize();
+}
