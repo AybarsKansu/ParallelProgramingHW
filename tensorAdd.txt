@@ -1,0 +1,106 @@
+#include <cuda_runtime.h>
+#include <iostream>
+#include <stdio.h>
+
+using namespace std;
+
+void displayGpuConfig() {
+     int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+
+    for (int i = 0; i < deviceCount; i++) {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, i);
+
+        cout << "GPU: " << prop.name << "\n";
+        cout << "Compute Capability: "
+             << prop.major << "." << prop.minor << "\n";
+
+        cout << "Global Memory: "
+             << prop.totalGlobalMem / (1024 * 1024)
+             << " MB\n";
+
+        cout << "SM Count: "
+             << prop.multiProcessorCount << "\n";
+
+        cout << "Warp Size: "
+             << prop.warpSize << "\n";
+
+        cout << "Max Threads per Block: "
+             << prop.maxThreadsPerBlock << "\n";
+
+        cout << "Max Threads per SM: "
+             << prop.maxThreadsPerMultiProcessor << "\n";
+
+        cout << "Max Block Dimensions: "
+             << prop.maxThreadsDim[0] << ", "
+             << prop.maxThreadsDim[1] << ", "
+             << prop.maxThreadsDim[2] << "\n";
+
+        cout << "Max Grid Dimensions: "
+             << prop.maxGridSize[0] << ", "
+             << prop.maxGridSize[1] << ", "
+             << prop.maxGridSize[2] << "\n";
+    }
+}
+
+__global__ void tensorAdd(const float* A, const float* B, float* C, int x, int y, int z) {
+     int threadIndex = blockDim.x * threadIdx.y + threadIdx.x;
+     int index = blockIdx.x * (blockDim.x * blockDim.y) + threadIndex;
+     C[index] = A[index] + B[index];
+}
+
+int main() {
+     //displayGpuConfig();
+     float x = 3; float y = 3; float z = 3;
+     int size = x*y*z;
+     size_t bytes = sizeof(float) * size;
+
+     float* A_h = new float[size];
+     float* B_h = new float[size];
+     float* C_h = new float[size];
+
+     for (int i = 0; i < x*y*z; i++) {
+          A_h[i] = 1.5; B_h[i] = 2.4;
+     }
+
+     float* A_d = nullptr;
+     float* B_d = nullptr;
+     float* C_d = nullptr;
+
+     cudaError_t err = cudaSuccess;
+
+     err = cudaMalloc(&A_d, bytes);
+     if (err != cudaSuccess) {
+          printf("hata: %s", cudaGetErrorString(err));
+     }
+     err = cudaMalloc(&B_d, bytes);
+     if (err != cudaSuccess) {
+          printf("hata: %s", cudaGetErrorString(err));
+     }
+     err = cudaMalloc(&C_d, bytes);
+     if (err != cudaSuccess) {
+          printf("hata: %s", cudaGetErrorString(err));
+     }
+     err = cudaMemcpy(A_d, A_h, bytes, cudaMemcpyHostToDevice);
+     if (err != cudaSuccess) {
+          printf("hata2: %s", cudaGetErrorString(err));
+     }
+     err = cudaMemcpy(B_d, B_h, bytes, cudaMemcpyHostToDevice);
+     if (err != cudaSuccess) {
+          printf("hata2: %s", cudaGetErrorString(err));
+     }
+     dim3 blockSize(3, 3);
+     dim3 gridSize(3);
+     tensorAdd<<<gridSize, blockSize>>>(A_d, B_d, C_d, x, y, z);
+     cudaDeviceSynchronize();
+
+     cudaMemcpy(C_h, C_d, bytes, cudaMemcpyDeviceToHost);
+     cudaFree(A_d);cudaFree(B_d);cudaFree(C_d);
+
+     for (int i = 0; i < x*y*z; i++) {
+          printf("%.2f ",C_h[i]);
+     }
+
+     delete[]A_h; delete[]B_h; delete[]C_h;
+}
