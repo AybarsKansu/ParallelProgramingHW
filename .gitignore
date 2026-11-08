@@ -1,7 +1,9 @@
 cuda-samples/
+cuda-course/
 build/
 main.exe
 cuda-env.bat
+.vscode/
 
 # CUDA and CMake generated files
 *.obj
