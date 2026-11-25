@@ -277,6 +277,6 @@ void convolutionExample() {
 }
 
 int main() {
-     //displayGpuConfig();
-     matmulExample();
+     displayGpuConfig();
+     //matmulExample();
 }
